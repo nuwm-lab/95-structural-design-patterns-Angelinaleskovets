@@ -1,114 +1,122 @@
 using System;
-using System.Data;
-using System.Data.SqlClient;
-using System.IO;
-using OfficeOpenXml; // Потрібен пакет EPPlus (для роботи з Excel)
+using System.Text.Json;
+using System.Collections.Generic;
 
-namespace ExcelToSQLAdapter
+// Компонент (Component) — базовий інтерфейс
+interface IJsonData
 {
-// Цільовий інтерфейс (Target) — те, що чекає система
-interface ISQLDatabase
-{
-void InsertData(DataTable table);
+string GetContent();
 }
+
+// Конкретний компонент (ConcreteComponent)
+class JsonData : IJsonData
+{
+private string _json;
 
 ```
-// Реалізація цільового інтерфейсу
-class SQLDatabase : ISQLDatabase
+public JsonData(string json)
 {
-    private string _connectionString;
-
-    public SQLDatabase(string connectionString)
-    {
-        _connectionString = connectionString;
-    }
-
-    public void InsertData(DataTable table)
-    {
-        using (SqlConnection conn = new SqlConnection(_connectionString))
-        {
-            conn.Open();
-            foreach (DataRow row in table.Rows)
-            {
-                string columns = string.Join(", ", table.Columns.Cast<DataColumn>().Select(c => c.ColumnName));
-                string values = string.Join(", ", row.ItemArray.Select(v => $"'{v}'"));
-                string query = $"INSERT INTO MyTable ({columns}) VALUES ({values})";
-                SqlCommand cmd = new SqlCommand(query, conn);
-                cmd.ExecuteNonQuery();
-            }
-        }
-        Console.WriteLine("Дані з Excel додані до SQL бази.");
-    }
+    _json = json;
 }
 
-// Старий клас (Adaptee) — читає Excel
-class ExcelReader
+public string GetContent()
 {
-    public DataTable ReadExcel(string path)
-    {
-        FileInfo fileInfo = new FileInfo(path);
-        using (ExcelPackage package = new ExcelPackage(fileInfo))
-        {
-            ExcelWorksheet sheet = package.Workbook.Worksheets[0];
-            DataTable table = new DataTable();
-            
-            // Додаємо колонки
-            foreach (var firstRowCell in sheet.Cells[1, 1, 1, sheet.Dimension.End.Column])
-                table.Columns.Add(firstRowCell.Text);
+    return _json;
+}
+```
 
-            // Додаємо рядки
-            for (int rowNum = 2; rowNum <= sheet.Dimension.End.Row; rowNum++)
-            {
-                var wsRow = sheet.Cells[rowNum, 1, rowNum, sheet.Dimension.End.Column];
-                DataRow row = table.NewRow();
-                int i = 0;
-                foreach (var cell in wsRow)
-                {
-                    row[i++] = cell.Text;
-                }
-                table.Rows.Add(row);
-            }
-            return table;
-        }
-    }
 }
 
-// Адаптер
-class ExcelToSQLAdapter : ISQLDatabase
+// Базовий декоратор (Decorator)
+abstract class JsonDecorator : IJsonData
 {
-    private ExcelReader _excelReader;
+protected IJsonData _jsonData;
 
-    public ExcelToSQLAdapter(ExcelReader excelReader)
-    {
-        _excelReader = excelReader;
-    }
+```
+protected JsonDecorator(IJsonData jsonData)
+{
+    _jsonData = jsonData;
+}
 
-    public void InsertData(DataTable table)
-    {
-        // Тут ми можемо трансформувати дані перед передачею у SQL, якщо потрібно
-        // В даному прикладі просто передаємо
-    }
+public virtual string GetContent()
+{
+    return _jsonData.GetContent();
+}
+```
 
-    public void InsertExcelToSQL(string excelPath, ISQLDatabase sqlDb)
+}
+
+// Конкретний декоратор для HTML-таблиці
+class HtmlTableDecorator : JsonDecorator
+{
+public HtmlTableDecorator(IJsonData jsonData) : base(jsonData) { }
+
+```
+public override string GetContent()
+{
+    string json = _jsonData.GetContent();
+    var items = JsonSerializer.Deserialize<List<Dictionary<string, object>>>(json);
+    if (items == null || items.Count == 0)
+        return "<p>No data</p>";
+
+    var html = "<table border='1'><thead><tr>";
+    foreach (var header in items[0].Keys)
     {
-        DataTable table = _excelReader.ReadExcel(excelPath);
-        sqlDb.InsertData(table);
+        html += $"<th>{header}</th>";
     }
+    html += "</tr></thead><tbody>";
+
+    foreach (var item in items)
+    {
+        html += "<tr>";
+        foreach (var value in item.Values)
+        {
+            html += $"<td>{value}</td>";
+        }
+        html += "</tr>";
+    }
+    html += "</tbody></table>";
+    return html;
+}
+```
+
+}
+
+// Додатковий декоратор для заголовку
+class HtmlHeaderDecorator : JsonDecorator
+{
+private string _title;
+
+```
+public HtmlHeaderDecorator(IJsonData jsonData, string title) : base(jsonData)
+{
+    _title = title;
+}
+
+public override string GetContent()
+{
+    return $"<h2>{_title}</h2>{_jsonData.GetContent()}";
+}
+```
+
 }
 
 class Program
 {
-    static void Main()
-    {
-        string excelPath = @"C:\path\to\file.xlsx";
-        string connectionString = "Server=.;Database=MyDB;Trusted_Connection=True;";
+static void Main()
+{
+string json = @"
+[
+{ ""Name"": ""Alice"", ""Age"": 30, ""City"": ""Kyiv"" },
+{ ""Name"": ""Bob"", ""Age"": 25, ""City"": ""Lviv"" }
+]";
 
-        ExcelReader reader = new ExcelReader();
-        ISQLDatabase sqlDb = new SQLDatabase(connectionString);
-        ExcelToSQLAdapter adapter = new ExcelToSQLAdapter(reader);
+```
+    IJsonData data = new JsonData(json);
+    IJsonData table = new HtmlTableDecorator(data);
+    IJsonData headerAndTable = new HtmlHeaderDecorator(table, "User Info");
 
-        adapter.InsertExcelToSQL(excelPath, sqlDb);
-    }
+    Console.WriteLine(headerAndTable.GetContent());
 }
 ```
 
